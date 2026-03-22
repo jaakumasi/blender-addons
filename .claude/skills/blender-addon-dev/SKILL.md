@@ -167,3 +167,37 @@ See @references/version-management.md for details.
 
 ## Registration Reference
 See @references/registration.md for single-file, multi-file, AddonPreferences, and keymap registration patterns.
+
+## Domain-Specific References
+
+### Materials & Shader Nodes
+See @references/materials-and-shaders.md for creating materials, shader node trees, linking nodes,
+loading textures, PBR setup, world/HDRI configuration, and the full shader node type table.
+
+### Animation & Keyframes
+See @references/animation-keyframes.md for keyframe insertion, F-Curves, Actions, NLA tracks,
+drivers, shape keys, frame change handlers, and timeline control.
+
+### Mesh & BMesh
+See @references/mesh-bmesh.md for procedural mesh creation, vertex/edge/face manipulation,
+bmesh operators, UV maps, vertex colors, vertex groups, modifiers, and `from_pydata`.
+
+### Geometry Nodes
+See @references/geometry-nodes.md for creating geometry node groups, adding nodes programmatically,
+group inputs (modifier parameters), instancing, and the full geometry node type table.
+
+### Camera & Render Settings
+See @references/camera-render.md for camera creation, lens configuration, depth of field,
+render resolution, Cycles/EEVEE settings, render engine selection, and multi-camera setups.
+
+### Armatures & Rigging
+See @references/armatures-rigging.md for armature/bone creation, pose mode, bone constraints (IK, copy rotation,
+limits), weight painting, bone collections, and skeleton building patterns.
+
+### Custom Node Trees
+See @references/custom-node-trees.md for defining custom node tree types, custom sockets,
+custom nodes, node categories, tree evaluation, and dynamic sockets.
+
+### Particles & Physics
+See @references/particles-physics.md for particle systems (emitter/hair), force fields,
+rigid body physics, cloth simulation, soft body, fluid simulation, and baking.
