@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "my_multi_file_addon"
+version = "1.0.0"
+name = "My Multi-File Addon"
+tagline = "Example multi-file addon structure for Blender 5.0"
+maintainer = "Developer Name <developer@example.com>"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+# tags = ["Object", "Mesh"]
+
+# [permissions]
+# files = "Import/export files from disk"
