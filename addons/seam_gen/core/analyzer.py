@@ -29,6 +29,7 @@ from . import seam_paths
 from . import genus as genus_mod
 from . import normal_clustering
 from . import distortion as distortion_mod
+from . import loop_detection
 
 
 class MeshAnalyzer:
@@ -44,7 +45,11 @@ class MeshAnalyzer:
         self._edge_loop = None
         self._visibility = None
         self._segmentation = None
-        self._normal_cluster = None   # new signal
+        self._normal_cluster = None
+
+        # Loop detection cache
+        self._scored_loops = None
+        self._structural_loop_edges = None
 
         # Cached final results
         self._combined_scores = None
@@ -102,56 +107,95 @@ class MeshAnalyzer:
             face_centroids = arrays['face_centroids']
             edge_face_map = arrays['edge_face_map']
             edge_face_count = arrays['edge_face_count']
+            edge_face_pairs = arrays.get('edge_face_pairs')
             vert_valence = arrays['vert_valence']
+            E = len(edge_verts)
 
-            # Phase 2: Dihedral angles.
+            # Phase 2: Dihedral angles (always computed — cheap and feeds concavity).
             progress("Computing dihedral angles", 0.08)
             self._dihedral = edge_scoring.compute_dihedral_scores(
-                edge_face_map, edge_face_count, face_normals
+                edge_face_map, edge_face_count, face_normals,
+                edge_face_pairs=edge_face_pairs,
             )
 
-            # Phase 3: Curvature.
-            progress("Computing curvature", 0.14)
-            mixed_areas = compute_mixed_voronoi_areas(bm, vert_coords)
-            gaussian = curvature.compute_gaussian_curvature(
-                bm, vert_coords, mixed_areas
-            )
-            mean_curv = curvature.compute_mean_curvature(
-                bm, vert_coords, mixed_areas
-            )
-            self._curvature_scores = curvature.compute_edge_curvature_scores(
-                vert_coords, edge_verts, gaussian, mean_curv
-            )
+            # Phase 3: Curvature (skip if weight is zero — fairly expensive).
+            if weights.get('curvature', 0.0) > 0:
+                progress("Computing curvature", 0.14)
+                try:
+                    tri_verts = arrays['tri_verts']
+                    V = len(vert_coords)
+                    mixed_areas = compute_mixed_voronoi_areas(tri_verts, vert_coords, V)
+                    gaussian = curvature.compute_gaussian_curvature(
+                        tri_verts, vert_coords, mixed_areas, V
+                    )
+                    mean_curv = curvature.compute_mean_curvature(
+                        tri_verts, vert_coords, mixed_areas, V
+                    )
+                    self._curvature_scores = curvature.compute_edge_curvature_scores(
+                        vert_coords, edge_verts, gaussian, mean_curv
+                    )
+                except (MemoryError, Exception):
+                    # Curvature is non-critical — fall back to zeros
+                    self._curvature_scores = np.zeros(E, dtype=np.float64)
+            else:
+                self._curvature_scores = np.zeros(E, dtype=np.float64)
 
-            # Phase 4: Concavity + edge loop alignment.
-            progress("Analysing concavity and edge flow", 0.22)
-            self._concavity = edge_scoring.compute_concavity_scores(
-                edge_face_map, edge_face_count, edge_verts,
-                vert_coords, face_normals, face_centroids
+            # Phase 4: Concavity.
+            progress("Analysing concavity", 0.22)
+            if weights.get('concavity', 0.0) > 0:
+                self._concavity = edge_scoring.compute_concavity_scores(
+                    edge_face_map, edge_face_count, edge_verts,
+                    vert_coords, face_normals, face_centroids,
+                    edge_face_pairs=edge_face_pairs,
+                )
+            else:
+                self._concavity = np.zeros(E, dtype=np.float64)
+
+            # Phase 4b: Edge loop detection and scoring.
+            progress("Detecting edge loops", 0.28)
+            raw_loops = loop_detection.detect_edge_loops(
+                edge_verts, arrays['vert_edge_map'],
+                edge_face_map, edge_face_count,
+            )
+            self._scored_loops = loop_detection.score_loops(
+                raw_loops, face_normals, edge_face_pairs,
+                edge_face_count, self._dihedral,
             )
             self._edge_loop = edge_scoring.compute_edge_loop_alignment(
-                vert_valence, edge_verts
+                vert_valence, edge_verts,
+                scored_loops=self._scored_loops,
             )
 
-            # Phase 5: AO Visibility (most expensive signal).
-            progress("Computing visibility (AO raycasting)", 0.32)
-            self._visibility = visibility.compute_ao_scores(
-                bm, vert_coords, edge_verts, n_samples=ao_samples
-            )
+            # Phase 5: Visibility.
+            if weights.get('visibility', 0.0) > 0:
+                progress("Computing visibility", 0.32)
+                self._visibility = visibility.compute_ao_scores(
+                    bm, vert_coords, edge_verts, n_samples=ao_samples
+                )
+            else:
+                self._visibility = np.zeros(E, dtype=np.float64)
 
             # Phase 6: Segmentation boundaries.
-            progress("Computing part boundaries", 0.52)
-            self._segmentation = segmentation.compute_segmentation_scores(
-                bm, vert_coords, edge_verts, edge_face_map,
-                edge_face_count, face_normals
-            )
+            if weights.get('segmentation', 0.0) > 0:
+                progress("Computing part boundaries", 0.52)
+                self._segmentation = segmentation.compute_segmentation_scores(
+                    bm, vert_coords, edge_verts, edge_face_map,
+                    edge_face_count, face_normals,
+                    edge_face_pairs=edge_face_pairs,
+                )
+            else:
+                self._segmentation = np.zeros(E, dtype=np.float64)
 
             # Phase 7: Normal clustering (hard-surface panel detection).
-            progress("Computing normal clusters", 0.60)
-            self._normal_cluster = normal_clustering.compute_normal_cluster_scores(
-                face_normals, edge_face_map, edge_face_count,
-                angle_threshold_deg=normal_cluster_angle
-            )
+            if weights.get('normal_cluster', 0.0) > 0:
+                progress("Computing normal clusters", 0.60)
+                self._normal_cluster = normal_clustering.compute_normal_cluster_scores(
+                    face_normals, edge_face_map, edge_face_count,
+                    angle_threshold_deg=normal_cluster_angle,
+                    edge_face_pairs=edge_face_pairs,
+                )
+            else:
+                self._normal_cluster = np.zeros(E, dtype=np.float64)
 
         else:
             progress("Using cached signals", 0.60)
@@ -171,57 +215,45 @@ class MeshAnalyzer:
             normal_cluster=self._normal_cluster,
         )
 
-        # --- Genus detection + homology cuts ---------------------------------
-        forced_seam_edges: set[int] = set()
+        # --- Prepare loop list: genus homology loops first, then scored ------
+        progress("Preparing loop-based seam candidates", 0.68)
+        all_loops = list(self._scored_loops) if self._scored_loops else []
 
+        # Add genus homology loops (required for torus, etc.) at top priority
         if use_genus_cuts:
-            progress("Detecting mesh topology (genus)", 0.67)
             try:
-                loops = genus_mod.find_homology_generators(
+                homology_loops = genus_mod.find_homology_generators(
                     bm,
                     arrays['edge_verts'],
                     arrays['edge_face_map'],
                     arrays['edge_face_count'],
                     self._combined_scores,
+                    detected_loops=self._scored_loops,
                 )
-                for loop in loops:
-                    forced_seam_edges.update(loop)
+                for loop_edges in homology_loops:
+                    # Insert as highest-priority loops
+                    all_loops.insert(0, {
+                        'edges': loop_edges,
+                        'verts': [],
+                        'is_closed': True,
+                        'score': 99.0,  # Ensure these come first
+                    })
             except Exception:
-                pass  # Genus detection is best-effort; never abort analysis.
+                pass
 
-        # --- Layout-aware Prim's spanning tree seam extraction ---------------
-        progress("Computing seams (Prim's spanning tree)", 0.75)
+        # --- Loop-first seam extraction ------------------------------------
+        progress("Computing seams (loop-first)", 0.75)
         n_islands = max(1, island_count) if island_count > 0 else 1
 
-        mask = topology.compute_prim_seams(
+        mask = topology.compute_loop_seams(
             arrays['edge_face_map'],
             arrays['edge_face_count'],
             self._combined_scores,
             self._n_faces,
-            face_centroids=arrays['face_centroids'],
+            scored_loops=all_loops,
+            edge_verts=arrays['edge_verts'],
+            n_verts=len(arrays['vert_coords']),
             n_islands=n_islands,
-            layout_bias=layout_bias,
-            forced_seam_edges=forced_seam_edges if forced_seam_edges else None,
-        )
-
-        # --- Distortion feedback: adaptively split high-distortion charts ----
-        if use_distortion_split:
-            progress("Splitting high-distortion charts", 0.84)
-            mask = distortion_mod.adaptive_chart_splitting(
-                mask,
-                self._combined_scores,
-                arrays['edge_face_map'],
-                arrays['edge_face_count'],
-                self._n_faces,
-                max_splits=8,
-                distortion_threshold=distortion_threshold,
-            )
-
-        # --- Multi-stage seam path smoothing ---------------------------------
-        progress("Smoothing seam paths", 0.93)
-        mask = seam_paths.smooth_seam_paths(
-            bm, mask, self._combined_scores,
-            arrays['edge_verts'], iterations=smoothing_iters
         )
 
         self._seam_mask = mask
@@ -249,6 +281,8 @@ class MeshAnalyzer:
         self._visibility = None
         self._segmentation = None
         self._normal_cluster = None
+        self._scored_loops = None
+        self._structural_loop_edges = None
         self._combined_scores = None
         self._seam_mask = None
         self._arrays = None

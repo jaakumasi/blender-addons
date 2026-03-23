@@ -33,6 +33,12 @@ class MESH_OT_seam_gen_analyze(Operator):
             self.report({'WARNING'}, "Mesh has no edges")
             return {'CANCELLED'}
 
+        # Clear all existing seams before analysis
+        bm.edges.ensure_lookup_table()
+        for edge in bm.edges:
+            edge.seam = False
+        bmesh.update_edit_mesh(obj.data)
+
         weights = {
             'dihedral': sg.w_dihedral,
             'curvature': sg.w_curvature,
@@ -109,10 +115,12 @@ class MESH_OT_seam_gen_accept(Operator):
         bm = bmesh.from_edit_mesh(obj.data)
         bm.edges.ensure_lookup_table()
 
+        # Clear ALL existing seams, then mark only suggested ones
         n_marked = 0
         for edge in bm.edges:
-            if edge.index < len(seam_mask) and seam_mask[edge.index]:
-                edge.seam = True
+            should_be_seam = (edge.index < len(seam_mask) and seam_mask[edge.index])
+            edge.seam = should_be_seam
+            if should_be_seam:
                 n_marked += 1
 
         bmesh.update_edit_mesh(obj.data)
@@ -153,10 +161,12 @@ class MESH_OT_seam_gen_accept_unwrap(Operator):
         bm = bmesh.from_edit_mesh(obj.data)
         bm.edges.ensure_lookup_table()
 
+        # Clear ALL existing seams, then mark only suggested ones
         n_marked = 0
         for edge in bm.edges:
-            if edge.index < len(seam_mask) and seam_mask[edge.index]:
-                edge.seam = True
+            should_be_seam = (edge.index < len(seam_mask) and seam_mask[edge.index])
+            edge.seam = should_be_seam
+            if should_be_seam:
                 n_marked += 1
 
         bmesh.update_edit_mesh(obj.data)

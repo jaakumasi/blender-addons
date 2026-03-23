@@ -10,19 +10,19 @@ from bpy.props import (
 # Mode preset weights (7 signals)
 PRESETS = {
     'HARD_SURFACE': {
-        'w_dihedral': 0.30, 'w_curvature': 0.05, 'w_concavity': 0.10,
-        'w_edge_loop': 0.10, 'w_visibility': 0.15, 'w_segmentation': 0.10,
-        'w_normal_cluster': 0.20,
+        'w_dihedral': 0.25, 'w_curvature': 0.05, 'w_concavity': 0.08,
+        'w_edge_loop': 0.18, 'w_visibility': 0.12, 'w_segmentation': 0.10,
+        'w_normal_cluster': 0.22,
     },
     'ORGANIC': {
-        'w_dihedral': 0.10, 'w_curvature': 0.18, 'w_concavity': 0.14,
-        'w_edge_loop': 0.08, 'w_visibility': 0.30, 'w_segmentation': 0.15,
-        'w_normal_cluster': 0.05,
+        'w_dihedral': 0.10, 'w_curvature': 0.14, 'w_concavity': 0.12,
+        'w_edge_loop': 0.15, 'w_visibility': 0.25, 'w_segmentation': 0.15,
+        'w_normal_cluster': 0.09,
     },
     'BALANCED': {
-        'w_dihedral': 0.18, 'w_curvature': 0.12, 'w_concavity': 0.12,
-        'w_edge_loop': 0.08, 'w_visibility': 0.22, 'w_segmentation': 0.13,
-        'w_normal_cluster': 0.15,
+        'w_dihedral': 0.16, 'w_curvature': 0.10, 'w_concavity': 0.10,
+        'w_edge_loop': 0.20, 'w_visibility': 0.18, 'w_segmentation': 0.12,
+        'w_normal_cluster': 0.14,
     },
 }
 
@@ -102,9 +102,10 @@ class SeamGenSettings(bpy.types.PropertyGroup):
         update=_on_weight_changed,
     )
     w_edge_loop: FloatProperty(
-        name="Edge Loop",
-        description="Weight for clean edge loop alignment",
-        default=0.08, min=0.0, max=1.0, step=1,
+        name="Edge Loops",
+        description="Weight for detected continuous edge loops — promotes clean, "
+                    "uninterrupted ring/meridian seam cuts",
+        default=0.20, min=0.0, max=1.0, step=1,
         update=_on_weight_changed,
     )
     w_visibility: FloatProperty(

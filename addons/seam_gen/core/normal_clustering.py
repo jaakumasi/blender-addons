@@ -18,7 +18,8 @@ from collections import deque
 
 
 def compute_normal_cluster_scores(face_normals, edge_face_map, edge_face_count,
-                                  angle_threshold_deg: float = 30.0):
+                                  angle_threshold_deg: float = 30.0,
+                                  edge_face_pairs=None):
     """Cluster faces by normal direction and score edges at cluster boundaries.
 
     Algorithm
@@ -92,8 +93,12 @@ def compute_normal_cluster_scores(face_normals, edge_face_map, edge_face_count,
     two_face_idx = np.where(edge_face_count == 2)[0]
 
     if len(two_face_idx) > 0:
-        f1 = np.array([edge_face_map[i][0] for i in two_face_idx], dtype=np.int32)
-        f2 = np.array([edge_face_map[i][1] for i in two_face_idx], dtype=np.int32)
+        if edge_face_pairs is not None:
+            f1 = edge_face_pairs[two_face_idx, 0]
+            f2 = edge_face_pairs[two_face_idx, 1]
+        else:
+            f1 = np.array([edge_face_map[i][0] for i in two_face_idx], dtype=np.int32)
+            f2 = np.array([edge_face_map[i][1] for i in two_face_idx], dtype=np.int32)
         boundary = labels[f1] != labels[f2]
         scores[two_face_idx[boundary]] = 1.0
 

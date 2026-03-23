@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\blender.exe\" -b --factory-startup --python-exit-code 1 --python-expr \":*)"
+      "Bash(\"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\blender.exe\" -b --factory-startup --python-exit-code 1 --python-expr \":*)",
+      "Bash(find /c/Users/JeromeAwonnisebaAkum/Documents/projects/blender/addons/seam_gen -name \"__pycache__\" -type d -exec rm -rf {} +)",
+      "Bash(find \"/c/Users/JeromeAwonnisebaAkum/AppData/Roaming/Blender Foundation/Blender/5.0/scripts/addons/seam_gen\" -name \"__pycache__\" -type d -exec rm -rf {} +)"
     ]
   }
 }

@@ -136,11 +136,13 @@ def _chain_geodesic_smooth(mask, scores, edge_verts, vert_edges):
     new_mask = mask.copy()
     chains = _build_seam_chains(mask, edge_verts, vert_edges)
 
-    for chain in chains:
-        n = len(chain['edges'])
-        if n < 3 or chain['is_loop']:
-            continue
+    # Only re-route the longest chains (most impact, avoid excess Dijkstra).
+    eligible = [c for c in chains if len(c['edges']) >= 5 and not c['is_loop']]
+    eligible.sort(key=lambda c: len(c['edges']), reverse=True)
+    eligible = eligible[:20]
 
+    for chain in eligible:
+        n = len(chain['edges'])
         start_v = chain['start']
         end_v = chain['end']
         if start_v == end_v:
@@ -246,17 +248,22 @@ def _walk_chain(start_ei, start_vert, mask, edge_verts, vert_edges, visited):
 
 
 def _dijkstra_max_score(start_v, end_v, edge_verts, vert_edges, scores,
-                        avoid_edges: set):
+                        avoid_edges: set, max_visited: int = 2000):
     """Dijkstra shortest-path that *maximises* total score.
 
-    Implemented as minimum-cost with cost = –score.
+    Implemented as minimum-cost with cost = -score.
+    Aborts and returns None if more than max_visited vertices are settled
+    or the heap exceeds a safe size limit.
 
     Returns ordered list of edge indices from start_v to end_v, or None.
     """
+    MAX_HEAP = 20000  # Safety cap to prevent MemoryError
+
     dist: dict[int, float] = {start_v: 0.0}
-    parent: dict[int, tuple[int, int]] = {}   # vertex → (prev_vertex, edge)
+    parent: dict[int, tuple[int, int]] = {}
     heap: list[tuple[float, int, int]] = [(0.0, 0, start_v)]
     counter = 1
+    settled = 0
 
     while heap:
         neg_score, _, vert = heapq.heappop(heap)
@@ -264,8 +271,11 @@ def _dijkstra_max_score(start_v, end_v, edge_verts, vert_edges, scores,
         if neg_score > dist.get(vert, float('inf')):
             continue
 
+        settled += 1
+        if settled > max_visited:
+            return None
+
         if vert == end_v:
-            # Reconstruct path.
             path = []
             cur = end_v
             while cur != start_v:
@@ -285,8 +295,9 @@ def _dijkstra_max_score(start_v, end_v, edge_verts, vert_edges, scores,
             if new_neg < dist.get(next_v, float('inf')):
                 dist[next_v] = new_neg
                 parent[next_v] = (vert, ei)
-                heapq.heappush(heap, (new_neg, counter, next_v))
-                counter += 1
+                if len(heap) < MAX_HEAP:
+                    heapq.heappush(heap, (new_neg, counter, next_v))
+                    counter += 1
 
     return None
 

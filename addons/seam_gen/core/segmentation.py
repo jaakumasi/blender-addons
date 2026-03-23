@@ -1,128 +1,41 @@
 """
 Mesh segmentation into natural chart regions.
 
-Spectral bisection (Fiedler vector) for meshes <= 20k verts.
-Region growing fallback for larger meshes.
+Region-growing segmentation using dihedral-angle weighted BFS from
+farthest-point seeds.  O(V+E) time, O(V+E) space.
 """
 
 import numpy as np
 from collections import deque
 
 
-SPECTRAL_VERTEX_LIMIT = 20000
-
-
 def compute_segmentation_scores(bm, vert_coords, edge_verts, edge_face_map,
-                                edge_face_count, face_normals, n_segments=0):
+                                edge_face_count, face_normals, n_segments=0,
+                                edge_face_pairs=None):
     """Segment mesh and return per-edge boundary scores.
 
     Args:
-        bm: BMesh object
+        bm: BMesh object (unused, kept for API compatibility)
         vert_coords: (V, 3) array
         edge_verts: (E, 2) array
         edge_face_map: list of face index lists per edge
         edge_face_count: (E,) array
         face_normals: (F, 3) array
         n_segments: target segments (0 = auto-detect)
+        edge_face_pairs: (E, 2) int32 optional fast face-pair array
 
     Returns (E,) float64 array: 1.0 for edges on segment boundaries, 0.0 otherwise.
     """
     V = len(vert_coords)
 
     if n_segments <= 0:
-        # Auto: aim for sqrt(V/100), clamped to [2, 20]
         n_segments = max(2, min(20, int(np.sqrt(V / 100.0))))
 
-    if V <= SPECTRAL_VERTEX_LIMIT:
-        labels = spectral_segmentation(bm, vert_coords, edge_verts, n_segments)
-    else:
-        dihedral = _quick_dihedral(edge_face_map, edge_face_count, face_normals)
-        labels = region_growing(vert_coords, edge_verts, dihedral, n_segments)
+    dihedral = _quick_dihedral(edge_face_map, edge_face_count, face_normals,
+                               edge_face_pairs=edge_face_pairs)
+    labels = region_growing(vert_coords, edge_verts, dihedral, n_segments)
 
     return _labels_to_edge_scores(labels, edge_verts)
-
-
-def spectral_segmentation(bm, vert_coords, edge_verts, n_segments):
-    """Segment mesh using Fiedler vector recursive bisection.
-
-    Returns (V,) int32 array of segment labels.
-    """
-    V = len(vert_coords)
-    labels = np.zeros(V, dtype=np.int32)
-
-    # Build adjacency with cotangent weights
-    laplacian = _build_graph_laplacian(bm, vert_coords)
-
-    # Recursive bisection
-    _recursive_bisect(laplacian, np.arange(V), labels, 0, n_segments)
-
-    return labels
-
-
-def _build_graph_laplacian(bm, vert_coords):
-    """Build dense graph Laplacian with uniform weights.
-
-    Using uniform weights (not cotangent) for segmentation —
-    cotangent weights emphasize geometry, uniform weights emphasize topology,
-    which is better for segmentation purposes.
-
-    Returns (V, V) float64 array.
-    """
-    V = len(vert_coords)
-    W = np.zeros((V, V), dtype=np.float64)
-
-    for edge in bm.edges:
-        i = edge.verts[0].index
-        j = edge.verts[1].index
-        # Weight by inverse edge length (shorter edges = stronger connection)
-        length = np.linalg.norm(vert_coords[i] - vert_coords[j])
-        w = 1.0 / max(length, 1e-10)
-        W[i, j] = w
-        W[j, i] = w
-
-    D = np.diag(W.sum(axis=1))
-    L = D - W
-    return L
-
-
-def _recursive_bisect(laplacian, vertex_indices, labels, current_label, target_segments):
-    """Recursively bisect vertex sets using Fiedler vector."""
-    if target_segments <= 1 or len(vertex_indices) < 4:
-        labels[vertex_indices] = current_label
-        return current_label + 1
-
-    # Extract sub-Laplacian for this vertex subset
-    sub_L = laplacian[np.ix_(vertex_indices, vertex_indices)]
-
-    # Compute Fiedler vector (2nd smallest eigenvector)
-    try:
-        eigenvalues, eigenvectors = np.linalg.eigh(sub_L)
-        fiedler = eigenvectors[:, 1]
-    except np.linalg.LinAlgError:
-        labels[vertex_indices] = current_label
-        return current_label + 1
-
-    # Split at median
-    median = np.median(fiedler)
-    mask_a = fiedler <= median
-    mask_b = ~mask_a
-
-    # Ensure both halves are non-empty
-    if not mask_a.any() or not mask_b.any():
-        labels[vertex_indices] = current_label
-        return current_label + 1
-
-    group_a = vertex_indices[mask_a]
-    group_b = vertex_indices[mask_b]
-
-    # Divide remaining segments between the two halves
-    segs_a = target_segments // 2
-    segs_b = target_segments - segs_a
-
-    next_label = _recursive_bisect(laplacian, group_a, labels, current_label, segs_a)
-    next_label = _recursive_bisect(laplacian, group_b, labels, next_label, segs_b)
-
-    return next_label
 
 
 def region_growing(vert_coords, edge_verts, dihedral_scores, n_segments):
@@ -201,17 +114,22 @@ def _farthest_point_sample(vert_coords, n_seeds):
     return seeds
 
 
-def _quick_dihedral(edge_face_map, edge_face_count, face_normals):
+def _quick_dihedral(edge_face_map, edge_face_count, face_normals,
+                    edge_face_pairs=None):
     """Quick dihedral angle computation for region growing weights."""
-    E = len(edge_face_map)
+    E = len(edge_face_count)
     scores = np.zeros(E, dtype=np.float64)
 
     two_face = edge_face_count == 2
     two_face_idx = np.where(two_face)[0]
 
     if len(two_face_idx) > 0:
-        f1 = np.array([edge_face_map[i][0] for i in two_face_idx], dtype=np.int32)
-        f2 = np.array([edge_face_map[i][1] for i in two_face_idx], dtype=np.int32)
+        if edge_face_pairs is not None:
+            f1 = edge_face_pairs[two_face_idx, 0]
+            f2 = edge_face_pairs[two_face_idx, 1]
+        else:
+            f1 = np.array([edge_face_map[i][0] for i in two_face_idx], dtype=np.int32)
+            f2 = np.array([edge_face_map[i][1] for i in two_face_idx], dtype=np.int32)
         dots = np.einsum('ij,ij->i', face_normals[f1], face_normals[f2])
         dots = np.clip(dots, -1.0, 1.0)
         scores[two_face_idx] = np.arccos(dots) / np.pi

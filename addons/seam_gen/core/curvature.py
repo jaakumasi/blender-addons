@@ -1,131 +1,116 @@
 """
-Discrete curvature estimation on triangle meshes.
+Discrete curvature estimation on triangle meshes (vectorized).
 
 Gaussian curvature via angle defect method.
 Mean curvature via cotangent Laplacian.
+All operations use batch numpy — no Python per-face loops.
 """
 
-import math
 import numpy as np
 
 
-def compute_gaussian_curvature(bm, vert_coords, mixed_areas):
+def compute_gaussian_curvature(tri_verts, vert_coords, mixed_areas, V):
     """Compute discrete Gaussian curvature at each vertex using angle defect.
 
     K(v) = (2*pi - sum(face_angles_at_v)) / A_mixed(v)
 
     Args:
-        bm: BMesh object
-        vert_coords: (V, 3) array
-        mixed_areas: (V,) array of mixed Voronoi areas
+        tri_verts: (T, 3) int32 triangle vertex indices
+        vert_coords: (V, 3) vertex positions
+        mixed_areas: (V,) mixed Voronoi areas
+        V: int number of vertices
 
     Returns (V,) float64 array of Gaussian curvature values.
     """
-    V = len(bm.verts)
     angle_sums = np.zeros(V, dtype=np.float64)
 
-    for face in bm.faces:
-        fv = face.verts
-        n = len(fv)
-        for i in range(n):
-            v = fv[i]
-            prev_v = fv[(i - 1) % n]
-            next_v = fv[(i + 1) % n]
+    if len(tri_verts) == 0:
+        return (2.0 * np.pi - angle_sums) / mixed_areas
 
-            vec_a = vert_coords[prev_v.index] - vert_coords[v.index]
-            vec_b = vert_coords[next_v.index] - vert_coords[v.index]
+    i0, i1, i2 = tri_verts[:, 0], tri_verts[:, 1], tri_verts[:, 2]
+    p0, p1, p2 = vert_coords[i0], vert_coords[i1], vert_coords[i2]
 
-            len_a = np.linalg.norm(vec_a)
-            len_b = np.linalg.norm(vec_b)
+    e01 = p1 - p0
+    e02 = p2 - p0
+    e12 = p2 - p1
 
-            if len_a < 1e-10 or len_b < 1e-10:
-                continue
+    # 2 * triangle area = |cross(e01, e02)|
+    cross_vec = np.cross(e01, e02)
+    double_area = np.linalg.norm(cross_vec, axis=1)
 
-            cos_angle = np.dot(vec_a, vec_b) / (len_a * len_b)
-            cos_angle = np.clip(cos_angle, -1.0, 1.0)
-            angle_sums[v.index] += math.acos(cos_angle)
+    # Dot products at each vertex (unnormalized cosines)
+    d0 = np.einsum('ij,ij->i', e01, e02)
+    d1 = np.einsum('ij,ij->i', -e01, e12)
+    d2 = np.einsum('ij,ij->i', e02, e12)  # = dot(-e02, -e12)
 
-    gaussian = (2.0 * np.pi - angle_sums) / mixed_areas
-    return gaussian
+    # Angles via atan2 (numerically stable)
+    ang0 = np.arctan2(double_area, d0)
+    ang1 = np.arctan2(double_area, d1)
+    ang2 = np.arctan2(double_area, d2)
+
+    # Scatter-add angles to vertices
+    np.add.at(angle_sums, i0, ang0)
+    np.add.at(angle_sums, i1, ang1)
+    np.add.at(angle_sums, i2, ang2)
+
+    return (2.0 * np.pi - angle_sums) / mixed_areas
 
 
-def compute_mean_curvature(bm, vert_coords, mixed_areas):
+def compute_mean_curvature(tri_verts, vert_coords, mixed_areas, V):
     """Compute discrete mean curvature at each vertex using cotangent Laplacian.
 
     H(v) = |sum_j w_ij * (x_j - x_i)| / (2 * A_mixed(v))
     where w_ij = (cot(alpha_ij) + cot(beta_ij)) / 2
 
-    For non-triangle faces, fan-triangulates from the first vertex.
-
     Args:
-        bm: BMesh object
-        vert_coords: (V, 3) array
-        mixed_areas: (V,) array of mixed Voronoi areas
+        tri_verts: (T, 3) int32 triangle vertex indices
+        vert_coords: (V, 3) vertex positions
+        mixed_areas: (V,) mixed Voronoi areas
+        V: int number of vertices
 
     Returns (V,) float64 array of mean curvature magnitudes.
     """
-    V = len(bm.verts)
     laplacian = np.zeros((V, 3), dtype=np.float64)
 
-    for face in bm.faces:
-        fv = face.verts
-        n = len(fv)
+    if len(tri_verts) == 0:
+        return np.zeros(V, dtype=np.float64)
 
-        # Fan-triangulate for n-gons
-        for ti in range(1, n - 1):
-            tri = [fv[0], fv[ti], fv[ti + 1]]
-            _accumulate_cotangent_weights(tri, vert_coords, laplacian)
+    i0, i1, i2 = tri_verts[:, 0], tri_verts[:, 1], tri_verts[:, 2]
+    p0, p1, p2 = vert_coords[i0], vert_coords[i1], vert_coords[i2]
 
-    # Mean curvature magnitude
+    e01 = p1 - p0
+    e02 = p2 - p0
+    e12 = p2 - p1
+
+    # 2 * triangle area
+    cross_vec = np.cross(e01, e02)
+    double_area = np.linalg.norm(cross_vec, axis=1)
+    inv_4a = np.where(double_area > 1e-12, 1.0 / (2.0 * double_area), 0.0)
+
+    # Dot products at each vertex
+    d0 = np.einsum('ij,ij->i', e01, e02)
+    d1 = np.einsum('ij,ij->i', -e01, e12)
+    d2 = np.einsum('ij,ij->i', e02, e12)
+
+    # Cotangent weights: cot(angle_i)/2 = d_i / (4 * tri_area) = d_i / (2 * double_area)
+    # Contributions per vertex per triangle:
+    # lap[v0] += cot(a1)/2 * e02 + cot(a2)/2 * e01
+    # lap[v1] += cot(a0)/2 * e12 + cot(a2)/2 * (-e01)
+    # lap[v2] += cot(a0)/2 * (-e12) + cot(a1)/2 * (-e02)
+    w_d0 = (d0 * inv_4a)[:, None]
+    w_d1 = (d1 * inv_4a)[:, None]
+    w_d2 = (d2 * inv_4a)[:, None]
+
+    contrib0 = w_d1 * e02 + w_d2 * e01
+    contrib1 = w_d0 * e12 - w_d2 * e01
+    contrib2 = -w_d0 * e12 - w_d1 * e02
+
+    np.add.at(laplacian, i0, contrib0)
+    np.add.at(laplacian, i1, contrib1)
+    np.add.at(laplacian, i2, contrib2)
+
     laplacian_norm = np.linalg.norm(laplacian, axis=1)
-    mean_curv = laplacian_norm / (2.0 * mixed_areas)
-
-    return mean_curv
-
-
-def _accumulate_cotangent_weights(tri_verts, vert_coords, laplacian):
-    """Add cotangent Laplacian contributions from one triangle.
-
-    For triangle with vertices (a, b, c):
-    - Edge (a, b): opposite angle at c, weight = cot(angle_c)
-    - Edge (b, c): opposite angle at a, weight = cot(angle_a)
-    - Edge (a, c): opposite angle at b, weight = cot(angle_b)
-    """
-    idx = [v.index for v in tri_verts]
-    p = np.array([vert_coords[i] for i in idx])  # (3, 3)
-
-    # Edge vectors
-    edges = [
-        p[1] - p[0],  # edge a→b
-        p[2] - p[1],  # edge b→c
-        p[0] - p[2],  # edge c→a
-    ]
-
-    # Angles at each vertex
-    for i in range(3):
-        j = (i + 1) % 3
-        k = (i + 2) % 3
-
-        # Angle at vertex i (between edges to j and k)
-        vec_to_j = p[j] - p[i]
-        vec_to_k = p[k] - p[i]
-        len_j = np.linalg.norm(vec_to_j)
-        len_k = np.linalg.norm(vec_to_k)
-
-        if len_j < 1e-10 or len_k < 1e-10:
-            continue
-
-        cos_a = np.dot(vec_to_j, vec_to_k) / (len_j * len_k)
-        cos_a = np.clip(cos_a, -0.999, 0.999)
-        sin_a = math.sqrt(1.0 - cos_a * cos_a)
-        cot_a = cos_a / max(sin_a, 1e-10)
-
-        # This angle is opposite to edge (j, k)
-        # Weight for edge (j, k) += cot(angle_at_i) / 2
-        w = cot_a * 0.5
-        diff_jk = vert_coords[idx[k]] - vert_coords[idx[j]]
-        laplacian[idx[j]] += w * diff_jk
-        laplacian[idx[k]] -= w * diff_jk
+    return laplacian_norm / (2.0 * mixed_areas)
 
 
 def compute_edge_curvature_scores(vert_coords, edge_verts, gaussian, mean_curv):

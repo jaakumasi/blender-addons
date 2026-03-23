@@ -49,23 +49,29 @@ def compute_genus(n_verts: int, n_edges: int, n_faces: int,
 
 
 def find_homology_generators(bm, edge_verts, edge_face_map,
-                             edge_face_count, edge_scores):
+                             edge_face_count, edge_scores,
+                             detected_loops=None):
     """Find non-contractible edge loops via tree-cotree decomposition.
 
     These loops *must* be marked as seams for the mesh to unfold into a
     topological disk.  The function is a no-op (returns []) for genus-0
     meshes (sphere, cube, cylinder with open caps, …).
 
+    When ``detected_loops`` is provided, the generator traces are replaced
+    with clean detected edge loops that pass through the same generator
+    edge, producing much smoother seam paths.
+
     Args:
-        bm:             BMesh in Edit Mode.
-        edge_verts:     (E, 2) int32 — vertex index pairs per edge.
-        edge_face_map:  list[list[int]] — face indices per edge.
-        edge_face_count:(E,) int32 — faces per edge.
-        edge_scores:    (E,) float64 — combined geometric scores [0, 1].
+        bm:              BMesh in Edit Mode.
+        edge_verts:      (E, 2) int32.
+        edge_face_map:   list[list[int]].
+        edge_face_count: (E,) int32.
+        edge_scores:     (E,) float64 — combined geometric scores [0, 1].
+        detected_loops:  optional list of loop dicts from loop_detection.
 
     Returns
-        list[list[int]]: Each inner list is a set of edge indices that
-        together form one non-contractible loop.  May be empty.
+        list[list[int]]: Each inner list is edge indices forming one
+        non-contractible loop.  May be empty.
     """
     bm.verts.ensure_lookup_table()
     bm.edges.ensure_lookup_table()
@@ -85,8 +91,6 @@ def find_homology_generators(bm, edge_verts, edge_face_map,
         return []
 
     # --- Step 1: primal spanning tree on vertices ----------------------------
-    # Low-score edges enter the tree first; high-score edges are candidates
-    # for generators (they tend to be at natural seam locations).
     primal_tree_edges, parent_edge, vert_depth = _build_primal_tree(
         V, edge_verts, edge_scores
     )
@@ -107,20 +111,43 @@ def find_homology_generators(bm, edge_verts, edge_face_map,
             continue
         generator_edges.append(ei)
 
-    # Clamp to expected 2g generators; prefer high-scoring ones.
     expected = 2 * g
     if len(generator_edges) > expected:
         generator_edges.sort(key=lambda ei: edge_scores[ei], reverse=True)
         generator_edges = generator_edges[:expected]
 
-    # --- Step 4: trace each generator into a closed loop ---------------------
+    # --- Step 4: trace each generator into a loop ----------------------------
+    # Build index: edge → detected loops containing it (for clean snapping).
+    edge_to_loops: dict[int, list[int]] = {}
+    if detected_loops:
+        for li, lp in enumerate(detected_loops):
+            if lp.get('is_closed', False):
+                for ei in lp['edges']:
+                    edge_to_loops.setdefault(ei, []).append(li)
+
     loops = []
+    used_loop_ids: set[int] = set()
+
     for gen_ei in generator_edges:
-        loop = _trace_generator_loop(
-            gen_ei, edge_verts, parent_edge, vert_depth
-        )
-        if loop:
-            loops.append(loop)
+        # Try to snap to a clean detected loop through this generator edge.
+        snapped = False
+        if gen_ei in edge_to_loops:
+            for li in edge_to_loops[gen_ei]:
+                if li in used_loop_ids:
+                    continue
+                lp = detected_loops[li]
+                loops.append(list(lp['edges']))
+                used_loop_ids.add(li)
+                snapped = True
+                break
+
+        if not snapped:
+            # Fallback: LCA tree-path trace.
+            loop = _trace_generator_loop(
+                gen_ei, edge_verts, parent_edge, vert_depth
+            )
+            if loop:
+                loops.append(loop)
 
     return loops
 
