@@ -6,6 +6,61 @@ Geometry Nodes is Blender's node-based system for procedural geometry generation
 and modification. Addons interact with it by creating/modifying node groups and
 applying them as modifiers.
 
+## CRITICAL: Correct Creation Pattern (Blender 5.0)
+
+In Blender 5.0, new GeometryNodeTree starts with NO sockets and NO nodes.
+You must follow this exact order:
+
+1. Create the node tree
+2. Add interface sockets BEFORE creating GroupInput/GroupOutput nodes
+3. Create nodes (they auto-populate sockets from the interface)
+4. Set `output_node.is_active_output = True`
+5. Link everything — **without links, the mesh disappears**
+
+This pattern comes from Blender's own source: `scripts/startup/bl_operators/geometry_nodes.py`
+
+```python
+import bpy
+
+# Step 1: Create node tree
+group = bpy.data.node_groups.new("MyGeoNodes", 'GeometryNodeTree')
+
+# Step 2: Add interface sockets BEFORE creating nodes
+group.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+group.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+
+# Step 3: Create nodes (they auto-sync sockets from the interface)
+input_node = group.nodes.new('NodeGroupInput')
+input_node.location = (-400, 0)
+
+output_node = group.nodes.new('NodeGroupOutput')
+output_node.is_active_output = True  # REQUIRED
+output_node.location = (400, 0)
+
+# Step 4: Link geometry through — WITHOUT THIS THE MESH VANISHES
+group.links.new(
+    input_node.outputs[0],   # outputs[0] = Geometry (first socket created)
+    output_node.inputs[0]    # inputs[0] = Geometry
+)
+
+# Step 5: Assign to modifier
+mod = obj.modifiers.new("MyGeoNodes", type='NODES')
+mod.node_group = group
+```
+
+### Accessing nodes by name after creation
+```python
+# Nodes are named "Group Input" and "Group Output" (English, not translated)
+gi = group.nodes["Group Input"]
+go = group.nodes["Group Output"]
+```
+
+### Common mistakes that cause mesh to disappear
+- Creating nodes BEFORE adding interface sockets (nodes won't have socket outputs)
+- Forgetting to link GroupInput → ... → GroupOutput (empty geometry = invisible mesh)
+- Missing `is_active_output = True` on GroupOutput
+- Using `interface.clear()` AFTER creating nodes (removes their sockets)
+
 ## Applying a Geometry Nodes Modifier
 
 ```python
@@ -13,38 +68,11 @@ import bpy
 
 obj = bpy.context.active_object
 
-# Add Geometry Nodes modifier
+# Add Geometry Nodes modifier — node_group is None initially
 mod = obj.modifiers.new(name="GeometryNodes", type='NODES')
 
-# The modifier auto-creates an empty node group
-# Access it:
-node_group = mod.node_group
-print(f"Node group: {node_group.name}")
-```
-
-## Creating a Node Group from Scratch
-
-```python
-# Create new geometry node group
-node_group = bpy.data.node_groups.new(name="MyGeoNodes", type='GeometryNodeTree')
-
-# Every geometry node group needs Group Input and Group Output
-input_node = node_group.nodes.new('NodeGroupInput')
-input_node.location = (-400, 0)
-
-output_node = node_group.nodes.new('NodeGroupOutput')
-output_node.location = (400, 0)
-
-# The group starts with a Geometry input and output socket by default
-# Connect input geometry → output geometry (passthrough)
-node_group.links.new(
-    input_node.outputs['Geometry'],
-    output_node.inputs['Geometry']
-)
-
-# Assign to a modifier
-mod = obj.modifiers.new("MyGeoNodes", type='NODES')
-mod.node_group = node_group
+# You MUST assign a node group (it is NOT auto-created)
+mod.node_group = my_node_group
 ```
 
 ## Adding Nodes
