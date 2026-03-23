@@ -36,7 +36,6 @@ class MESH_OT_seam_gen_analyze(Operator):
         weights = {
             'dihedral': sg.w_dihedral,
             'curvature': sg.w_curvature,
-            'segmentation': sg.w_segmentation,
             'concavity': sg.w_concavity,
             'edge_loop': sg.w_edge_loop,
         }
@@ -51,14 +50,15 @@ class MESH_OT_seam_gen_analyze(Operator):
         try:
             scores, seam_mask = analyzer.analyze(
                 bm, obj, weights,
-                threshold=sg.seam_threshold,
                 smoothing_iters=sg.smoothing_iterations,
-                segment_count=sg.segment_count,
+                island_count=sg.island_count,
                 progress_callback=progress_cb,
             )
         except Exception as e:
             wm.progress_end()
             self.report({'ERROR'}, f"Analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
             return {'CANCELLED'}
 
         wm.progress_end()
@@ -134,7 +134,6 @@ class MESH_OT_seam_gen_accept_unwrap(Operator):
         obj = context.active_object
         sg = context.scene.seam_gen
 
-        # First accept the seams
         analyzer = get_analyzer()
         scores, seam_mask = analyzer.get_cached_results()
 

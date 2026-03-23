@@ -37,13 +37,12 @@ class VIEW3D_PT_seam_gen(Panel):
 
         layout.separator()
 
-        # Threshold & Smoothing
+        # Settings
         box = layout.box()
-        box.label(text="Threshold & Smoothing", icon='MODIFIER')
+        box.label(text="Settings", icon='MODIFIER')
         col = box.column(align=True)
-        col.prop(sg, "seam_threshold")
         col.prop(sg, "smoothing_iterations")
-        col.prop(sg, "segment_count")
+        col.prop(sg, "island_count")
 
         # Actions (only when analyzed)
         if sg.is_analyzed:
@@ -73,7 +72,6 @@ class VIEW3D_PT_seam_gen_weights(Panel):
         col = layout.column(align=True)
         col.prop(sg, "w_dihedral")
         col.prop(sg, "w_curvature")
-        col.prop(sg, "w_segmentation")
         col.prop(sg, "w_concavity")
         col.prop(sg, "w_edge_loop")
 
@@ -95,12 +93,11 @@ class VIEW3D_PT_seam_gen_tips(Panel):
         layout = self.layout
         col = layout.column(align=True)
         col.scale_y = 0.8
-        col.label(text="Too many seams: raise Threshold")
-        col.label(text="Too few seams: lower Threshold")
-        col.label(text="Seams ignore creases: raise Dihedral")
-        col.label(text="Seams on flat areas: lower Segmentation")
-        col.label(text="Jagged seams: raise Edge Loop + Smoothing")
+        col.label(text="Seams in wrong places: raise Dihedral")
+        col.label(text="Seams on smooth areas: raise Curvature")
         col.label(text="Seams on ridges: raise Concavity")
+        col.label(text="Jagged seams: raise Edge Loop + Smoothing")
+        col.label(text="Too much stretch: increase UV Islands")
         col.label(text="Mechanical mesh: use Hard Surface mode")
         col.label(text="Character mesh: use Organic mode")
 

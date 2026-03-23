@@ -7,19 +7,19 @@ from bpy.props import (
     EnumProperty, FloatProperty, IntProperty, BoolProperty, PointerProperty
 )
 
-# Mode preset weights
+# Mode preset weights (4 signals — no segmentation)
 PRESETS = {
     'HARD_SURFACE': {
-        'w_dihedral': 0.5, 'w_curvature': 0.1, 'w_segmentation': 0.2,
-        'w_concavity': 0.1, 'w_edge_loop': 0.1,
+        'w_dihedral': 0.5, 'w_curvature': 0.1,
+        'w_concavity': 0.2, 'w_edge_loop': 0.2,
     },
     'ORGANIC': {
-        'w_dihedral': 0.2, 'w_curvature': 0.3, 'w_segmentation': 0.3,
-        'w_concavity': 0.1, 'w_edge_loop': 0.1,
+        'w_dihedral': 0.2, 'w_curvature': 0.4,
+        'w_concavity': 0.2, 'w_edge_loop': 0.2,
     },
     'BALANCED': {
-        'w_dihedral': 0.3, 'w_curvature': 0.2, 'w_segmentation': 0.25,
-        'w_concavity': 0.1, 'w_edge_loop': 0.15,
+        'w_dihedral': 0.35, 'w_curvature': 0.25,
+        'w_concavity': 0.2, 'w_edge_loop': 0.2,
     },
 }
 
@@ -82,48 +82,37 @@ class SeamGenSettings(bpy.types.PropertyGroup):
     w_dihedral: FloatProperty(
         name="Dihedral Angle",
         description="Weight for sharp angle detection between faces",
-        default=0.3, min=0.0, max=1.0, step=1,
+        default=0.35, min=0.0, max=1.0, step=1,
         update=_on_weight_changed,
     )
     w_curvature: FloatProperty(
         name="Curvature",
         description="Weight for surface curvature analysis",
-        default=0.2, min=0.0, max=1.0, step=1,
-        update=_on_weight_changed,
-    )
-    w_segmentation: FloatProperty(
-        name="Segmentation",
-        description="Weight for natural region boundary detection",
         default=0.25, min=0.0, max=1.0, step=1,
         update=_on_weight_changed,
     )
     w_concavity: FloatProperty(
         name="Concavity",
         description="Bonus for seams in concave creases (hidden seams)",
-        default=0.1, min=0.0, max=1.0, step=1,
+        default=0.2, min=0.0, max=1.0, step=1,
         update=_on_weight_changed,
     )
     w_edge_loop: FloatProperty(
         name="Edge Loop",
         description="Weight for clean edge loop alignment",
-        default=0.15, min=0.0, max=1.0, step=1,
+        default=0.2, min=0.0, max=1.0, step=1,
         update=_on_weight_changed,
     )
 
-    seam_threshold: FloatProperty(
-        name="Seam Threshold",
-        description="Minimum score to suggest an edge as a seam (lower = more seams)",
-        default=0.5, min=0.0, max=1.0, step=1,
-    )
     smoothing_iterations: IntProperty(
         name="Smoothing",
         description="Path smoothing passes to reduce jagged seams",
         default=3, min=0, max=10,
     )
-    segment_count: IntProperty(
-        name="Segments",
-        description="Target chart segments (0 = auto-detect from mesh complexity)",
-        default=0, min=0, max=50,
+    island_count: IntProperty(
+        name="UV Islands",
+        description="Target UV island count (0 = single island, more = less distortion)",
+        default=0, min=0, max=20,
     )
 
     # Hidden state flags

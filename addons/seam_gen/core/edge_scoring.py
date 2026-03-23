@@ -119,24 +119,24 @@ def compute_edge_loop_alignment(vert_valence, edge_verts):
     return scores
 
 
-def compute_combined_scores(dihedral, curvature, segmentation, concavity, edge_loop, weights):
-    """Combine all signal scores with given weights.
+def compute_combined_scores(dihedral, curvature, concavity, edge_loop, weights):
+    """Combine geometric signal scores with given weights.
+
+    These scores feed into the MST as edge weights — higher score means
+    the edge is a better seam candidate (more likely to be cut).
 
     Args:
-        dihedral:     (E,) dihedral angle scores
-        curvature:    (E,) curvature scores
-        segmentation: (E,) segmentation boundary scores
-        concavity:    (E,) concavity scores
-        edge_loop:    (E,) edge loop alignment scores
-        weights:      dict with keys 'dihedral', 'curvature', 'segmentation',
-                      'concavity', 'edge_loop'
+        dihedral:  (E,) dihedral angle scores
+        curvature: (E,) curvature scores
+        concavity: (E,) concavity scores
+        edge_loop: (E,) edge loop alignment scores
+        weights:   dict with keys 'dihedral', 'curvature', 'concavity', 'edge_loop'
 
     Returns (E,) float64 array with scores in [0, 1].
     """
     combined = (
         weights['dihedral'] * dihedral
         + weights['curvature'] * curvature
-        + weights['segmentation'] * segmentation
         + weights['concavity'] * concavity
         + weights['edge_loop'] * edge_loop
     )
