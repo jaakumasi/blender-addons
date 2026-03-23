@@ -43,6 +43,15 @@ class VIEW3D_PT_seam_gen(Panel):
         col = box.column(align=True)
         col.prop(sg, "smoothing_iterations")
         col.prop(sg, "island_count")
+        col.prop(sg, "ao_samples")
+        col.prop(sg, "layout_bias")
+        col.prop(sg, "normal_cluster_angle")
+        col.separator()
+        row = col.row(align=True)
+        row.prop(sg, "use_genus_cuts")
+        row.prop(sg, "use_distortion_split")
+        if sg.use_distortion_split:
+            col.prop(sg, "distortion_threshold")
 
         # Actions (only when analyzed)
         if sg.is_analyzed:
@@ -70,9 +79,12 @@ class VIEW3D_PT_seam_gen_weights(Panel):
         sg = context.scene.seam_gen
 
         col = layout.column(align=True)
+        col.prop(sg, "w_visibility")
         col.prop(sg, "w_dihedral")
         col.prop(sg, "w_curvature")
         col.prop(sg, "w_concavity")
+        col.prop(sg, "w_normal_cluster")
+        col.prop(sg, "w_segmentation")
         col.prop(sg, "w_edge_loop")
 
         if sg.mode != 'CUSTOM':
@@ -93,13 +105,17 @@ class VIEW3D_PT_seam_gen_tips(Panel):
         layout = self.layout
         col = layout.column(align=True)
         col.scale_y = 0.8
-        col.label(text="Seams in wrong places: raise Dihedral")
+        col.label(text="Seams too visible: raise Visibility (AO)")
+        col.label(text="Seams ignore creases: raise Dihedral")
         col.label(text="Seams on smooth areas: raise Curvature")
         col.label(text="Seams on ridges: raise Concavity")
+        col.label(text="Seams bisect flat panels: raise Normal Clusters")
+        col.label(text="Seams cross parts: raise Part Boundaries")
         col.label(text="Jagged seams: raise Edge Loop + Smoothing")
-        col.label(text="Too much stretch: increase UV Islands")
-        col.label(text="Mechanical mesh: use Hard Surface mode")
-        col.label(text="Character mesh: use Organic mode")
+        col.label(text="Cube/cylinder looks wrong: raise Layout Bias")
+        col.label(text="Torus not unfolding: enable Topology Cuts")
+        col.label(text="AO too slow: lower AO Quality")
+        col.label(text="Too much stretch: enable Auto-Split Distortion")
 
 
 classes = (

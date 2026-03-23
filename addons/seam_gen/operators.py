@@ -38,6 +38,9 @@ class MESH_OT_seam_gen_analyze(Operator):
             'curvature': sg.w_curvature,
             'concavity': sg.w_concavity,
             'edge_loop': sg.w_edge_loop,
+            'visibility': sg.w_visibility,
+            'segmentation': sg.w_segmentation,
+            'normal_cluster': sg.w_normal_cluster,
         }
 
         wm = context.window_manager
@@ -52,6 +55,12 @@ class MESH_OT_seam_gen_analyze(Operator):
                 bm, obj, weights,
                 smoothing_iters=sg.smoothing_iterations,
                 island_count=sg.island_count,
+                ao_samples=sg.ao_samples,
+                layout_bias=sg.layout_bias,
+                normal_cluster_angle=sg.normal_cluster_angle,
+                use_genus_cuts=sg.use_genus_cuts,
+                use_distortion_split=sg.use_distortion_split,
+                distortion_threshold=sg.distortion_threshold,
                 progress_callback=progress_cb,
             )
         except Exception as e:
@@ -91,7 +100,7 @@ class MESH_OT_seam_gen_accept(Operator):
         sg = context.scene.seam_gen
 
         analyzer = get_analyzer()
-        scores, seam_mask = analyzer.get_cached_results()
+        _, seam_mask = analyzer.get_cached_results()
 
         if seam_mask is None:
             self.report({'WARNING'}, "No analysis results — run Analyze first")
@@ -135,7 +144,7 @@ class MESH_OT_seam_gen_accept_unwrap(Operator):
         sg = context.scene.seam_gen
 
         analyzer = get_analyzer()
-        scores, seam_mask = analyzer.get_cached_results()
+        _, seam_mask = analyzer.get_cached_results()
 
         if seam_mask is None:
             self.report({'WARNING'}, "No analysis results — run Analyze first")

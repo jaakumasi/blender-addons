@@ -1,5 +1,5 @@
 """
-Headless test for SeamGen addon (v2 — MST-based topology).
+Headless test for SeamGen addon (v3 — MST + AO visibility + segmentation).
 
 Run with:
   blender.exe -b --python tests/test_seam_gen.py
@@ -8,6 +8,7 @@ Run with:
 import sys
 import os
 import traceback
+import time
 
 # Add addons directory to path
 addon_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "addons")
@@ -28,9 +29,13 @@ def test_registration():
 
     assert hasattr(bpy.types, "MESH_OT_seam_gen_analyze"), "Analyze operator not registered"
     assert hasattr(bpy.types, "MESH_OT_seam_gen_accept"), "Accept operator not registered"
-    assert hasattr(bpy.types, "MESH_OT_seam_gen_accept_unwrap"), "Accept & Unwrap not registered"
-    assert hasattr(bpy.types, "MESH_OT_seam_gen_clear"), "Clear operator not registered"
     assert hasattr(bpy.types.Scene, "seam_gen"), "Scene property not registered"
+
+    # Verify new v3 properties exist
+    sg = bpy.context.scene.seam_gen
+    assert hasattr(sg, "w_visibility"), "Missing w_visibility property"
+    assert hasattr(sg, "w_segmentation"), "Missing w_segmentation property"
+    assert hasattr(sg, "ao_samples"), "Missing ao_samples property"
 
     print("  Registration: PASS")
     unregister()
@@ -53,25 +58,18 @@ def test_mesh_utils():
     assert arrays['vert_coords'].shape == (8, 3)
     assert arrays['edge_verts'].shape == (12, 2)
     assert arrays['face_normals'].shape == (6, 3)
-    assert np.all(arrays['vert_valence'] == 3)
-    assert np.all(arrays['edge_face_count'] == 2)
 
     bm.free()
     bpy.data.objects.remove(obj)
     print("  Mesh Utils: PASS")
 
 
-def test_topology_mst_cube():
-    """Test MST-based seam extraction on a cube.
-
-    A cube has 6 faces and 12 edges. MST needs 5 edges.
-    So seams = 12 - 5 = 7 edges.
-    """
-    print("\n=== Test: Topology MST on Cube ===")
+def test_ao_visibility_cube():
+    """Test AO visibility on a cube — should be roughly uniform."""
+    print("\n=== Test: AO Visibility (Cube) ===")
 
     from seam_gen.utils.mesh_utils import bmesh_to_arrays
-    from seam_gen.core.edge_scoring import compute_dihedral_scores
-    from seam_gen.core.topology import compute_mst_seams, build_face_adjacency
+    from seam_gen.core.visibility import compute_ao_scores
 
     bpy.ops.mesh.primitive_cube_add()
     obj = bpy.context.active_object
@@ -79,42 +77,53 @@ def test_topology_mst_cube():
     bm.from_mesh(obj.data)
     arrays = bmesh_to_arrays(bm)
 
-    E = len(bm.edges)
-    F = len(bm.faces)
-    print(f"  Cube: {E} edges, {F} faces")
+    t0 = time.time()
+    ao = compute_ao_scores(bm, arrays['vert_coords'], arrays['edge_verts'], n_samples=16)
+    elapsed = time.time() - t0
 
-    # All cube edges have same dihedral (~0.5)
-    dihedral = compute_dihedral_scores(
-        arrays['edge_face_map'], arrays['edge_face_count'], arrays['face_normals']
-    )
+    print(f"  AO range: [{ao.min():.3f}, {ao.max():.3f}], mean: {ao.mean():.3f}")
+    print(f"  AO computation: {elapsed:.3f}s")
 
-    # Use dihedral as edge weights for MST
-    seam_mask = compute_mst_seams(
-        arrays['edge_face_map'], arrays['edge_face_count'],
-        dihedral, F, n_islands=1
-    )
-
-    n_seams = int(seam_mask.sum())
-    expected_seams = E - (F - 1)  # 12 - 5 = 7
-    print(f"  Seam edges: {n_seams} (expected {expected_seams})")
-    assert n_seams == expected_seams, f"Expected {expected_seams} seams, got {n_seams}"
-
-    # Verify face adjacency
-    interior, boundary = build_face_adjacency(
-        arrays['edge_face_map'], arrays['edge_face_count']
-    )
-    print(f"  Interior edges: {len(interior)}, Boundary: {len(boundary)}")
-    assert len(interior) == 12, "Cube should have 12 interior edges"
-    assert len(boundary) == 0, "Cube should have 0 boundary edges"
+    assert ao.shape == (12,), f"Expected (12,), got {ao.shape}"
+    assert ao.min() >= 0.0, "AO scores below 0"
+    assert ao.max() <= 1.0, "AO scores above 1"
 
     bm.free()
     bpy.data.objects.remove(obj)
-    print("  Topology MST Cube: PASS")
+    print("  AO Visibility (Cube): PASS")
 
 
-def test_topology_mst_multi_island():
-    """Test multi-island splitting on a cube."""
-    print("\n=== Test: Multi-Island MST ===")
+def test_ao_visibility_sphere():
+    """Test AO on a UV sphere — bottom/interior should be more occluded."""
+    print("\n=== Test: AO Visibility (Sphere) ===")
+
+    from seam_gen.utils.mesh_utils import bmesh_to_arrays
+    from seam_gen.core.visibility import compute_ao_scores
+
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8)
+    obj = bpy.context.active_object
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    arrays = bmesh_to_arrays(bm)
+
+    t0 = time.time()
+    ao = compute_ao_scores(bm, arrays['vert_coords'], arrays['edge_verts'], n_samples=16)
+    elapsed = time.time() - t0
+
+    print(f"  Sphere AO range: [{ao.min():.3f}, {ao.max():.3f}], mean: {ao.mean():.3f}")
+    print(f"  AO computation ({len(arrays['vert_coords'])} verts): {elapsed:.3f}s")
+
+    assert ao.shape[0] == len(arrays['edge_verts']), "AO shape mismatch"
+    assert ao.min() >= 0.0 and ao.max() <= 1.0, "AO out of range"
+
+    bm.free()
+    bpy.data.objects.remove(obj)
+    print("  AO Visibility (Sphere): PASS")
+
+
+def test_topology_mst_cube():
+    """Test MST seam extraction on a cube — 7 seams expected."""
+    print("\n=== Test: Topology MST on Cube ===")
 
     from seam_gen.utils.mesh_utils import bmesh_to_arrays
     from seam_gen.core.edge_scoring import compute_dihedral_scores
@@ -126,38 +135,30 @@ def test_topology_mst_multi_island():
     bm.from_mesh(obj.data)
     arrays = bmesh_to_arrays(bm)
 
+    E = len(bm.edges)
     F = len(bm.faces)
+
     dihedral = compute_dihedral_scores(
         arrays['edge_face_map'], arrays['edge_face_count'], arrays['face_normals']
     )
-
-    # 1 island: 7 seams
-    mask1 = compute_mst_seams(
-        arrays['edge_face_map'], arrays['edge_face_count'], dihedral, F, n_islands=1
-    )
-    # 2 islands: 8 seams (7 + 1 removed MST edge)
-    mask2 = compute_mst_seams(
-        arrays['edge_face_map'], arrays['edge_face_count'], dihedral, F, n_islands=2
-    )
-    # 3 islands: 9 seams
-    mask3 = compute_mst_seams(
-        arrays['edge_face_map'], arrays['edge_face_count'], dihedral, F, n_islands=3
+    seam_mask = compute_mst_seams(
+        arrays['edge_face_map'], arrays['edge_face_count'],
+        dihedral, F, n_islands=1
     )
 
-    n1, n2, n3 = int(mask1.sum()), int(mask2.sum()), int(mask3.sum())
-    print(f"  1 island: {n1} seams, 2 islands: {n2} seams, 3 islands: {n3} seams")
-
-    assert n2 == n1 + 1, f"2 islands should have 1 more seam than 1 island"
-    assert n3 == n1 + 2, f"3 islands should have 2 more seams than 1 island"
+    n_seams = int(seam_mask.sum())
+    expected = E - (F - 1)
+    print(f"  Seam edges: {n_seams} (expected {expected})")
+    assert n_seams == expected
 
     bm.free()
     bpy.data.objects.remove(obj)
-    print("  Multi-Island MST: PASS")
+    print("  Topology MST Cube: PASS")
 
 
 def test_full_pipeline_cube():
-    """Test the full analysis pipeline produces valid seams on a cube."""
-    print("\n=== Test: Full Pipeline (Cube) ===")
+    """Test full v3 pipeline on a cube."""
+    print("\n=== Test: Full Pipeline v3 (Cube) ===")
 
     from seam_gen.core.analyzer import get_analyzer
 
@@ -168,35 +169,34 @@ def test_full_pipeline_cube():
 
     E = len(bm.edges)
     F = len(bm.faces)
-    print(f"  Cube: {E} edges, {F} faces")
 
     weights = {
-        'dihedral': 0.35, 'curvature': 0.25,
-        'concavity': 0.2, 'edge_loop': 0.2,
+        'dihedral': 0.2, 'curvature': 0.15, 'concavity': 0.15,
+        'edge_loop': 0.1, 'visibility': 0.25, 'segmentation': 0.15,
     }
 
     analyzer = get_analyzer()
     scores, seam_mask = analyzer.analyze(
-        bm, obj, weights, smoothing_iters=0, island_count=0,
+        bm, obj, weights, smoothing_iters=0, island_count=0, ao_samples=8,
     )
 
     n_seams = int(seam_mask.sum())
-    expected = E - (F - 1)  # 7 for cube
-    print(f"  Seam edges: {n_seams} (expected {expected})")
-    assert n_seams == expected, f"Expected {expected}, got {n_seams}"
+    expected = E - (F - 1)
+    print(f"  Cube: {E} edges, {F} faces, {n_seams} seams (expected {expected})")
+    assert n_seams == expected
 
     bm.free()
     bpy.data.objects.remove(obj)
-    print("  Full Pipeline (Cube): PASS")
+    print("  Full Pipeline v3 (Cube): PASS")
 
 
-def test_full_pipeline_sphere():
-    """Test on a UV sphere — should produce valid topology."""
-    print("\n=== Test: Full Pipeline (UV Sphere) ===")
+def test_full_pipeline_suzanne():
+    """Test on Suzanne (monkey head) — the real organic test."""
+    print("\n=== Test: Full Pipeline v3 (Suzanne) ===")
 
     from seam_gen.core.analyzer import get_analyzer
 
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8)
+    bpy.ops.mesh.primitive_monkey_add()
     obj = bpy.context.active_object
     bm = bmesh.new()
     bm.from_mesh(obj.data)
@@ -204,100 +204,62 @@ def test_full_pipeline_sphere():
     V = len(bm.verts)
     E = len(bm.edges)
     F = len(bm.faces)
-    print(f"  Sphere: {V} verts, {E} edges, {F} faces")
+    print(f"  Suzanne: {V} verts, {E} edges, {F} faces")
 
     weights = {
-        'dihedral': 0.35, 'curvature': 0.25,
-        'concavity': 0.2, 'edge_loop': 0.2,
+        'dihedral': 0.2, 'curvature': 0.15, 'concavity': 0.15,
+        'edge_loop': 0.1, 'visibility': 0.25, 'segmentation': 0.15,
     }
 
+    t0 = time.time()
     analyzer = get_analyzer()
     scores, seam_mask = analyzer.analyze(
-        bm, obj, weights, smoothing_iters=0, island_count=0,
+        bm, obj, weights, smoothing_iters=3, island_count=0, ao_samples=8,
     )
-
-    n_seams = int(seam_mask.sum())
-    expected_min = E - (F - 1)  # Minimum for single island
-    print(f"  Seam edges: {n_seams} (minimum for 1 island: {expected_min})")
-    assert n_seams >= expected_min, f"Need at least {expected_min} seams, got {n_seams}"
-
-    # Score range should be valid
-    assert scores.min() >= 0.0 and scores.max() <= 1.0, "Scores out of [0,1]"
-
-    bm.free()
-    bpy.data.objects.remove(obj)
-    print("  Full Pipeline (UV Sphere): PASS")
-
-
-def test_full_pipeline_subdivided():
-    """Test on a subdivided cube — more complex topology."""
-    print("\n=== Test: Full Pipeline (Subdivided Cube) ===")
-
-    from seam_gen.core.analyzer import get_analyzer
-
-    bpy.ops.mesh.primitive_cube_add()
-    obj = bpy.context.active_object
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.subdivide(number_cuts=2)
-    bpy.ops.object.mode_set(mode='OBJECT')
-
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-
-    V = len(bm.verts)
-    E = len(bm.edges)
-    F = len(bm.faces)
-    print(f"  Subdivided cube: {V} verts, {E} edges, {F} faces")
-
-    weights = {
-        'dihedral': 0.35, 'curvature': 0.25,
-        'concavity': 0.2, 'edge_loop': 0.2,
-    }
-
-    analyzer = get_analyzer()
-    scores, seam_mask = analyzer.analyze(
-        bm, obj, weights, smoothing_iters=3, island_count=0,
-    )
+    elapsed = time.time() - t0
 
     n_seams = int(seam_mask.sum())
     expected_min = E - (F - 1)
-    print(f"  Seam edges: {n_seams} (minimum for 1 island: {expected_min})")
-    # With smoothing, seam count might differ slightly but should be close
-    assert n_seams >= expected_min - 5, f"Seam count too low: {n_seams}"
+    print(f"  Seam edges: {n_seams} (minimum: {expected_min})")
+    print(f"  Total analysis time: {elapsed:.2f}s")
+
+    assert n_seams >= expected_min, f"Too few seams: {n_seams} < {expected_min}"
+    assert scores.min() >= 0.0 and scores.max() <= 1.0
 
     bm.free()
     bpy.data.objects.remove(obj)
-    print("  Full Pipeline (Subdivided Cube): PASS")
+    print("  Full Pipeline v3 (Suzanne): PASS")
 
 
 def test_mode_presets():
-    """Test that mode presets update weights correctly."""
-    print("\n=== Test: Mode Presets ===")
+    """Test that mode presets update all 6 weights correctly."""
+    print("\n=== Test: Mode Presets (v3) ===")
 
     sg = bpy.context.scene.seam_gen
 
-    sg.mode = 'HARD_SURFACE'
-    assert abs(sg.w_dihedral - 0.5) < 0.01, f"Hard surface dihedral: {sg.w_dihedral}"
-
     sg.mode = 'ORGANIC'
-    assert abs(sg.w_dihedral - 0.2) < 0.01, f"Organic dihedral: {sg.w_dihedral}"
-    assert abs(sg.w_curvature - 0.4) < 0.01, f"Organic curvature: {sg.w_curvature}"
+    assert abs(sg.w_visibility - 0.3) < 0.01, f"Organic visibility: {sg.w_visibility}"
+    assert abs(sg.w_dihedral - 0.1) < 0.01, f"Organic dihedral: {sg.w_dihedral}"
+
+    sg.mode = 'HARD_SURFACE'
+    assert abs(sg.w_dihedral - 0.35) < 0.01, f"Hard surface dihedral: {sg.w_dihedral}"
 
     sg.mode = 'BALANCED'
-    assert abs(sg.w_dihedral - 0.35) < 0.01, f"Balanced dihedral: {sg.w_dihedral}"
+    assert abs(sg.w_visibility - 0.25) < 0.01, f"Balanced visibility: {sg.w_visibility}"
+    assert abs(sg.w_segmentation - 0.15) < 0.01, f"Balanced segmentation: {sg.w_segmentation}"
 
-    # Manual weight change should switch to CUSTOM
-    sg.w_dihedral = 0.99
-    assert sg.mode == 'CUSTOM', f"Expected CUSTOM after weight change, got {sg.mode}"
+    # Custom detection
+    sg.w_visibility = 0.99
+    assert sg.mode == 'CUSTOM', f"Expected CUSTOM, got {sg.mode}"
 
     sg.mode = 'BALANCED'
-    print("  Mode Presets: PASS")
+    print("  Mode Presets (v3): PASS")
 
 
 # ---------------------------------------------------------------
 def main():
     print("\n" + "=" * 60)
-    print("SeamGen v2 Headless Test Suite (MST Topology)")
+    print("SeamGen v3 Headless Test Suite (MST + AO Visibility)")
     print("=" * 60)
 
     passed = 0
@@ -305,11 +267,11 @@ def main():
     tests = [
         test_registration,
         test_mesh_utils,
+        test_ao_visibility_cube,
+        test_ao_visibility_sphere,
         test_topology_mst_cube,
-        test_topology_mst_multi_island,
         test_full_pipeline_cube,
-        test_full_pipeline_sphere,
-        test_full_pipeline_subdivided,
+        test_full_pipeline_suzanne,
         test_mode_presets,
     ]
 

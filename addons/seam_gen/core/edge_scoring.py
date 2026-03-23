@@ -119,29 +119,40 @@ def compute_edge_loop_alignment(vert_valence, edge_verts):
     return scores
 
 
-def compute_combined_scores(dihedral, curvature, concavity, edge_loop, weights):
-    """Combine geometric signal scores with given weights.
+def compute_combined_scores(dihedral, curvature, concavity, edge_loop,
+                            visibility, segmentation, weights,
+                            normal_cluster=None):
+    """Combine all signal scores with given weights.
 
-    These scores feed into the MST as edge weights — higher score means
-    the edge is a better seam candidate (more likely to be cut).
+    These scores feed into the spanning tree as edge weights — higher score
+    means the edge is a better seam candidate (more likely to be cut).
 
     Args:
-        dihedral:  (E,) dihedral angle scores
-        curvature: (E,) curvature scores
-        concavity: (E,) concavity scores
-        edge_loop: (E,) edge loop alignment scores
-        weights:   dict with keys 'dihedral', 'curvature', 'concavity', 'edge_loop'
+        dihedral:        (E,) dihedral angle scores
+        curvature:       (E,) curvature scores
+        concavity:       (E,) concavity scores
+        edge_loop:       (E,) edge loop alignment scores
+        visibility:      (E,) AO visibility scores (high = occluded = good seam)
+        segmentation:    (E,) part boundary scores
+        weights:         dict with keys for all signals (may include
+                         'normal_cluster')
+        normal_cluster:  (E,) optional face-normal cluster boundary scores
 
     Returns (E,) float64 array with scores in [0, 1].
     """
     combined = (
-        weights['dihedral'] * dihedral
-        + weights['curvature'] * curvature
-        + weights['concavity'] * concavity
-        + weights['edge_loop'] * edge_loop
+        weights.get('dihedral', 0.0) * dihedral
+        + weights.get('curvature', 0.0) * curvature
+        + weights.get('concavity', 0.0) * concavity
+        + weights.get('edge_loop', 0.0) * edge_loop
+        + weights.get('visibility', 0.0) * visibility
+        + weights.get('segmentation', 0.0) * segmentation
     )
 
-    # Normalize by total weight to keep in [0, 1] range
+    if normal_cluster is not None:
+        combined += weights.get('normal_cluster', 0.0) * normal_cluster
+
+    # Normalise by total weight to keep in [0, 1] range.
     total_weight = sum(weights.values())
     if total_weight > 0:
         combined /= total_weight
