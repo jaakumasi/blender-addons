@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "physics_machine"
+version = "1.0.0"
+name = "PhysicsMachine"
+tagline = "Realistic jiggle and flex deformation for any mesh"
+maintainer = "Developer <developer@example.com>"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+tags = ["Object", "Mesh", "Animation"]
